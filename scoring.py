@@ -51,8 +51,23 @@ def combine_signals(model_score: float, style_score: float) -> float:
 
     The weights in config.py are placeholders. Change them, or ignore them and
     write a different rule.
+
+    **The rule actually used here:** a weighted average most of the time, but
+    when the two signals split by more than `config.DISAGREEMENT_THRESHOLD`,
+    skip the average and lean toward whichever signal read *lower* (more
+    human) instead — weighted `config.DISAGREEMENT_LOW_WEIGHT` toward the
+    lower one. Accusing a real writer costs more than missing a generated one,
+    so when the two methods actively disagree, that disagreement itself is
+    treated as a reason for caution rather than averaged away.
     """
-    # TODO: replace this
+    diff = abs(model_score - style_score)
+    if diff > config.DISAGREEMENT_THRESHOLD:
+        lower = min(model_score, style_score)
+        higher = max(model_score, style_score)
+        return (
+            config.DISAGREEMENT_LOW_WEIGHT * lower
+            + (1 - config.DISAGREEMENT_LOW_WEIGHT) * higher
+        )
     return (
         config.WEIGHT_MODEL_SIGNAL * model_score
         + config.WEIGHT_STYLE_SIGNAL * style_score
@@ -85,12 +100,19 @@ def score_to_label(score: float) -> tuple[str, str]:
     think if they got it on their own work. That question is the whole
     milestone.
     """
-    # TODO: replace this — thresholds are in config.py
     if score >= config.AI_THRESHOLD:
-        return "ai", "PLACEHOLDER — write the high-confidence AI label."
+        return "ai", (
+            "We think this was most likely written by an AI system. "
+            "If that's wrong, you can appeal and a person will take a look."
+        )
     if score <= config.HUMAN_THRESHOLD:
-        return "human", "PLACEHOLDER — write the high-confidence human label."
-    return "unsure", "PLACEHOLDER — write the unsure label."
+        return "human", "We think this was probably written by a person."
+    return "unsure", (
+        "We can't tell with confidence whether this was written by a person "
+        "or an AI system. This isn't an accusation — it means our signals "
+        "didn't agree clearly either way. No action has been taken; you're "
+        "welcome to appeal if you'd like a person to look at it."
+    )
 
 
 def label_ranges() -> list[tuple[str, str]]:

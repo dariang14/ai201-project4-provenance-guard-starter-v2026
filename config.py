@@ -57,6 +57,12 @@ DETECTOR_MAX_TOKENS = 400
 WEIGHT_MODEL_SIGNAL = 0.5
 WEIGHT_STYLE_SIGNAL = 0.5
 
+# When the two signals split by more than this, the weighted average above is
+# skipped in favor of leaning toward whichever signal read lower (more
+# human). See scoring.py::combine_signals for why.
+DISAGREEMENT_THRESHOLD = 0.4
+DISAGREEMENT_LOW_WEIGHT = 0.7
+
 
 # ─── Thresholds (Milestone 5) ────────────────────────────────────────────────
 # Where one label becomes another. Scores run 0.0 (confidently human) to 1.0
@@ -83,6 +89,15 @@ AI_THRESHOLD = 0.65
 # If a label you can't reach is the problem, the fix is upstream of the
 # thresholds: a style signal that actually varies. `scoring.label_ranges()`
 # prints the bands; the reachable range is a different question.
+
+
+# ─── Input limits (Milestone 3) ──────────────────────────────────────────────
+# `text` has to be long enough for signal one to say anything at all (gpt2
+# needs at least 3 tokens) and short enough that one request can't make the
+# service grind on megabytes of input. Both ends return 400, not a crash.
+
+MIN_TEXT_CHARS = 20
+MAX_TEXT_CHARS = 20_000
 
 
 # ─── Rate limiting (UNIT 8) ──────────────────────────────────────────────────
