@@ -425,18 +425,34 @@ to appeal it.
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| 1. my own writing | ≤ 2 of 10 flagged ai | 2/10 | 2/10 | 2/10 | MET |
+| 2. score spread | ≥ 0.4 gap | 0.377 | 0.377 | 0.377 | MISSED |
+| 3. all labels reachable | all 3 of 3 | 3/3 | 3/3 | 3/3 | MET |
+| 4. appeal always changes status | 10 of 10 | 10/10 | 10/10 | 10/10 | MET |
+| 5. no crash on bad input | 0 of 4 are 500 | 0/4 | 0/4 | 0/4 | MET |
+
+Produced by `run_eval.py::main` (criteria 1/3/5), a standalone score-spread
+pair also run through `run_eval.py` (criterion 2), and `run_appeal_eval.py::main`
+(criterion 4). All three trials were identical for every criterion — gpt2 in
+eval mode is deterministic, so that's expected, not a sign a trial was
+skipped.
 
 **Real output from one trial**, pasted as text, naming the file and function
 that produced it:
 
 ```json
-
+[
+  {"creator_id": "eval_my own writi_1", "guess": "ai", "model_score": 0.8918, "style_score": 0.7083, "combined_score": 0.80005, "label": "We think this was most likely written by an AI system. If that's wrong, you can appeal and a person will take a look."},
+  {"creator_id": "eval_my own writi_2", "guess": "human", "model_score": 0.1532, "style_score": 0.6923, "combined_score": 0.31493, "label": "We think this was probably written by a person."},
+  {"creator_id": "eval_my own writi_3", "guess": "unsure", "model_score": 0.6207, "style_score": 0.6667, "combined_score": 0.6437, "label": "We can't tell with confidence whether this was written by a person or an AI system. This isn't an accusation — it means our signals didn't agree clearly either way. No action has been taken; you're welcome to appeal if you'd like a person to look at it."},
+  {"creator_id": "eval_my own writi_4", "guess": "ai", "model_score": 0.7711, "style_score": 0.7292, "combined_score": 0.75015, "label": "We think this was most likely written by an AI system. If that's wrong, you can appeal and a person will take a look."}
+]
 ```
+(`app.py::submit`, scoring via `scoring.py::combine_signals`. Rows 1 and 4
+are the two of my own ten lines that scored `ai` — both short, declarative,
+aphorism-style sentences, which is exactly the "common words, short ordinary
+sentences" profile signal one is biased toward. Full ten-row output for all
+three trials is in `results/run_2026-11-16_0754_before.md`.)
 
 **Diagnoses**
 
@@ -467,6 +483,17 @@ threshold — so the combining rule leaned the 70/30 way toward the lower
 sentences, pasted quotations, unusual words, padding) moved the score but
 not past either threshold — the system stayed suspicious even where it
 wasn't fully convinced.
+
+**Criterion 2, score spread (MISSED — 0.377 of a 0.4 target).** Stage: the
+combining rule. Mechanism: my "clearly AI" calibration text scored
+model=0.8517/style=0.6272, and my "clearly human" one scored
+model=0.2871/style=0.437 — a real, correctly-ordered gap on both individual
+signals, but the 0.5/0.5 weighted average compresses both toward the middle
+before the two are compared, so the combined gap (0.377) ends up narrower
+than either signal's own gap would have shown on its own. This is the same
+compression that makes threshold tuning hard everywhere else in this
+write-up: averaging two signals needed for robustness is also what shrinks
+the usable range between clear cases.
 
 **Prompt injection (0 of 6 BROKE).** Stage: none — there's no stage for this
 family to target. Both signals are pure measurement (perplexity,

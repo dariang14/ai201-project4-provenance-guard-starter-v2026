@@ -30,8 +30,16 @@ SCENARIOS = [
         # things you actually wrote. This is the criterion that matters most and
         # it's meaningless with someone else's prose.
         "texts": [
-            "REPLACE ME with a paragraph you wrote yourself.",
-            "REPLACE ME with another one. Ten pieces is the usual number.",
+            "If you can get up and do what needs to be done even when you don't feel like it, you can change your life",
+            "The best art perfectly captures and articulates very real human emotions and experiences",
+            "Remember who you are and never forget it",
+            "When the world was open and free and I could be who I wanted to be",
+            "Don't live as a slave to your impulses",
+            "Everything matters and it doesn't at the same time",
+            "It's cooler to care, always has been",
+            "Knowledge alone isn't power. The acquisition of knowledge and its application is power.",
+            "Write out what you feel and read it as art. Does what I keep to myself contribute to something greater?",
+            "Do it now, not later. Anti-procastinate.",
         ],
     },
     {
