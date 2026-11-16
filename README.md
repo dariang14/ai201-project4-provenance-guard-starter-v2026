@@ -291,6 +291,23 @@ $ curl "http://127.0.0.1:5000/log?limit=3"
   one that shows the rule changing the outcome versus a plain average (0.317
   vs. 0.417).
 
+**Moment 3 (Unit 8)**
+
+- *What I asked for:* After running the full attack set, I asked for a
+  diagnosis of every miss and broken attack — stage and mechanism, not just
+  "it got through" — and for that diagnosis to actually point at one fix.
+- *What came back:* It traced MF06 and MF07 (both near-certain false `ai`
+  verdicts) to the same root cause — `style_signal`'s three sub-measures all
+  defaulting to their maximum-AI value when there's nothing to measure — and
+  proposed the neutral-0.5 fix, then re-ran the entire 56-attack set (not
+  just the two affected rows) to confirm nothing else moved.
+- *What I changed:* I pushed back on scope — the first framing treated this
+  as "the" fix for false positives generally, and I asked for it to be
+  explicit in the README that this fix does *not* touch the much larger
+  `false_positive` family problem (6 of 8 still wrongly flagged), since
+  conflating the two would overstate what one narrow code change actually
+  did.
+
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
 ---
@@ -481,38 +498,108 @@ hiding: several *unrelated* attacks accidentally shared one identity.
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** `stylometry.py::style_signal` now returns a neutral 0.5
+immediately when `words(text)` finds nothing (no `[a-z0-9']` characters at
+all), instead of computing its three sub-components and averaging them —
+which previously floored every one of them to its "maximum AI" value by
+construction whenever there was nothing to measure.
 
-**Which diagnosis pointed at it:**
+**Which diagnosis pointed at it:** The single worst outcome — MF06 (emoji
+text, 0.998 "ai") and MF07 (right-to-left script, 0.953 "ai") — both failing
+for exactly the same reason: zero extractable words forces `sentence_length_spread`,
+`type_token_ratio`, and `punctuation_density` into their degenerate cases
+simultaneously, and all three degenerate cases read as maximally AI-like. A
+pattern across two attacks in the same family, not two unrelated misses.
 
 ### Attack Run — After
 
-<!-- Same format. `run_attacks.py --label after` -->
+Full table in [`results/attack_run_2026-11-16_0405_after.md`](results/attack_run_2026-11-16_0405_after.md)
+(`run_attacks.py --set attack_set --label after`). Same 56 attacks, same
+method, same verdict policy.
 
+| Family | Attacks | BROKE (before) | BROKE (after) |
+|---|---|---|---|
+| `evasion` | 10 | 1 | 1 |
+| `false_positive` | 8 | 6 | 6 |
+| `prompt_injection` | 6 | 0 | 0 |
+| `malformed` | 20 | 0 | 0 |
+| `flood_same_creator` | 12 | 0 | 0 |
 
+The only two rows in the whole 56-attack table that changed at all:
 
-**Did it help, and how do I know:**
+| ID | Targeting | Before | After |
+|---|---|---|---|
+| MF06 | text is emoji only | 0.998 → `ai` | 0.649 → `unsure` |
+| MF07 | text is right-to-left script | 0.953 → `ai` | 0.622 → `unsure` |
 
-<!-- Widening the unsure band usually fixes one problem and creates another.
-     Reporting that trade honestly is worth full credit. -->
+Everything else — every `false_positive`, every `evasion`, every
+`prompt_injection`, every other `malformed`/`flood_same_creator` row — is
+byte-for-byte identical, because none of those inputs hit the zero-word
+path. I also re-ran the appeal-path eval (`run_appeal_eval.py --label
+after`): still 10/10 across all 3 trials, unaffected, as expected.
 
-
+**Did it help, and how do I know:** Yes, for exactly the two attacks it
+targeted, and it's a clean, isolated fix precisely because nothing else
+moved — I compared every row, not just the two I expected to change, which
+is how I know it didn't quietly break something else. But it's a narrow
+fix for a narrow failure mode. The much bigger problem — 6 of 8
+`false_positive` attacks still wrongly flagged as `ai` — is completely
+untouched, because that failure lives in signal one's core behavior
+(ordinary, predictable human prose), not in the zero-word edge case this
+change addresses. I picked this fix because it was the most severe single
+outcome (near-certain false accusation, and specifically one that would fall
+on writers in non-Latin scripts) and because it was fixable with a precise,
+low-risk, single-location change I could verify didn't disturb anything
+else — not because it was the fix most likely to move my overall numbers.
+The honest cost here is opportunity cost: I spent this unit's one
+improvement on a real but narrow bug instead of on the false-positive
+problem that's actually costing the most real writers, which stays in
+**What's Still Broken** below.
 
 ---
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+**6 of 8 `false_positive` attacks (FP02–FP07) still get flagged `ai`.**
+What I'd do: raise `AI_THRESHOLD` (currently 0.65) so that signal one's
+0.73–0.88 range on plain/formal human prose lands in `unsure` instead of
+`ai`, and recalibrate against the `evasion` family afterward, since EV09 and
+EV10 already sit at 0.63 and 0.86 — raising the threshold enough to clear
+FP07 (0.766) would very likely also let EV10 (an evasion attempt that
+currently HELD at `ai`) through as `unsure` instead. Why I stopped: this
+unit's improvement was already spent on the zero-word fix, and changing the
+threshold is exactly the kind of change that needs its own full before/after
+attack run to measure honestly rather than estimating from the numbers
+already in this table — I didn't want to report a second "after" I hadn't
+actually run.
 
+**EV01's typo evasion still works, and by extension so would similar
+typo-based evasion against this exact mechanism.** What I'd do: make
+`type_token_ratio` length-aware (e.g. compare against a baseline TTR curve
+for text of that word count) so a handful of injected typos can't move it as
+much relative to text length — right now a single text's TTR has no sense of
+what's "normal" for its own length. Why I stopped: that's a real redesign of
+the measure, not a threshold tweak, and it risks changing behavior on
+*every* text TTR touches, not just typo'd ones — too large a change to make
+and verify in the time this unit allows.
 
+**RQ10 and RQ11 getting `429` instead of `400`.** What I'd do: have
+`rate_limit_key()` fall back to a stable per-request identifier (or simply
+not rate-limit requests whose body can't be read as JSON at all, since those
+can never be billed to a real creator anyway) instead of the shared IP
+bucket, so unrelated malformed-request attacks stop compounding against each
+other. Why I stopped: this is a real but minor and cosmetic issue — nothing
+crashed, nothing was wrongly accepted, and fixing it doesn't change any
+verdict in this table. Lower priority than either of the two above.
 
-**The trade I'd make if this ran for real:**
-
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
-
-
+**The trade I'd make if this ran for real:** I'd raise `AI_THRESHOLD`, the
+first fix above, even knowing it also lets EV10-style evasion through as
+`unsure`. A wrongly accused real writer loses standing and gets an
+accusation they have to actively appeal; a slightly-more-evasive AI
+submission that now reads `unsure` instead of `ai` costs the site a softer,
+unconfirmed read on content that still gets reviewed on appeal if challenged
+— the second cost is smaller and falls on the site, not on an individual
+person.
 
 <!-- ═════════════════════════════════════════════════════════════════════
 
