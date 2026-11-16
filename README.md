@@ -297,47 +297,108 @@ $ curl "http://127.0.0.1:5000/log?limit=3"
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** 5 per minute, 100 per day
 
 **Why those numbers and not others:**
-<!-- Think about two people: a real writer submitting their own work a few
-     times an hour, and a script sending a thousand variations to map your
-     thresholds. Your numbers have to be liveable for the first and hostile to
-     the second. -->
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+A real writer revising drafts might resubmit every minute or two during one
+sitting, but rarely dozens of times total in a day. A script trying to map
+where my thresholds sit needs many submissions in quick succession to get a
+useful picture. 5/minute comfortably covers the first case — even someone
+resubmitting after every small edit stays under it — while making the second
+case expensive: mapping the score range with any precision needs far more
+than 5 data points a minute. 100/day is generous for even a very active
+single writer but still well below what a mapping script would want to send
+over a full day.
+
+**What a caller counts as:** Per `creator_id` when one is given (a string,
+non-empty), falling back to the caller's IP address otherwise
+(`app.py::rate_limit_key`). Per-creator is the right default for a real
+writer — it means one person submitting from different devices still shares
+one budget, and someone else's traffic never eats into theirs. The IP
+fallback exists so a request that omits `creator_id` entirely isn't a free
+pass around the limit; the cost, which the attack run below surfaces, is that
+multiple *different* malformed requests that all lack a usable `creator_id`
+end up sharing that one IP bucket with each other, even though they're
+nominally unrelated attacks.
 
 **The run of status codes when I pushed past it:**
 
-<!-- python run_attacks.py --flood 15 -->
-
+```bash
+$ python run_attacks.py --flood 15
 ```
 
 ```
+200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
+```
+
+10 of 15 were rate limited, exactly as expected for a 5/minute limit against
+15 rapid submissions from one `creator_id`. `GET /log` confirmed each 429 was
+recorded as a `rejected` entry with `reason: "rate_limited"`.
 
 ---
 
 ## Attack Run — Before
 
-<!-- Every attack with its outcome and a held-or-broke mark.
-     `run_attacks.py --label before` produces the table. -->
+Full table, every attack with its outcome and my own HELD/BROKE judgment, is
+in [`results/attack_run_2026-11-16_0403_before.md`](results/attack_run_2026-11-16_0403_before.md)
+(`run_attacks.py --set attack_set --label before`). 56 attacks, 0 auto-marked
+BROKE (no crash, no 5xx, ever) — every verdict below is my own judgment call,
+not the script's.
 
+**Verdict policy**, since "held" and "broke" aren't self-evident: an
+`evasion` attack BROKE only if it fully flipped the label to `human` (landing
+on `unsure` means it didn't fully work — the system stayed suspicious, even
+if less than before); a `false_positive` attack BROKE if it got labelled
+`ai` (a real accusation of a real piece of human writing); `malformed` and
+`flood_same_creator` attacks are judged purely on crash-safety, since that's
+the only thing those targets are actually testing.
 
+| Family | Attacks | BROKE | HELD |
+|---|---|---|---|
+| `evasion` | 10 | 1 | 9 |
+| `false_positive` | 8 | 6 | 2 |
+| `prompt_injection` | 6 | 0 | 6 |
+| `malformed` | 20 | 0 | 20 |
+| `flood_same_creator` | 12 | 0 | 12 |
 
 **Ten audit log entries from the run**
 
-<!-- Choose entries that show the interesting failures, not the ten easiest. -->
-
 ```json
-
+{"combined_score": 0.6968, "content_id": "b235f68c-95d0-4430-b8a2-43c8eb3b5263", "creator_id": "attacker_FP02", "guess": "ai", "label": "We think this was most likely written by an AI system. If that's wrong, you can appeal and a person will take a look.", "model_score": 0.7387, "status": "decided", "style_score": 0.6549, "timestamp": "2026-11-16T04:03:07+00:00"}
+{"combined_score": 0.74325, "content_id": "5d3a9d38-58b1-45ba-8390-e953ad9cf47c", "creator_id": "attacker_FP05", "guess": "ai", "label": "We think this was most likely written by an AI system. If that's wrong, you can appeal and a person will take a look.", "model_score": 0.8005, "status": "decided", "style_score": 0.686, "timestamp": "2026-11-16T04:03:07+00:00"}
+{"combined_score": 0.30306, "content_id": "616d25c5-fe74-405f-b885-4fb90489237e", "creator_id": "attacker_EV01", "guess": "human", "label": "We think this was probably written by a person.", "model_score": 0.1635, "status": "decided", "style_score": 0.6287, "timestamp": "2026-11-16T04:03:06+00:00"}
+{"combined_score": 0.99845, "content_id": "88399f42-b308-48b8-bbde-0ae2a9882a12", "creator_id": "attacker_MF06", "guess": "ai", "label": "We think this was most likely written by an AI system. If that's wrong, you can appeal and a person will take a look.", "model_score": 0.9969, "status": "decided", "style_score": 1.0, "timestamp": "2026-11-16T04:03:09+00:00"}
+{"combined_score": 0.9532, "content_id": "34386e77-9c23-4e85-9aa9-0398d3ce7c9c", "creator_id": "attacker_MF07", "guess": "ai", "label": "We think this was most likely written by an AI system. If that's wrong, you can appeal and a person will take a look.", "model_score": 0.9064, "status": "decided", "style_score": 1.0, "timestamp": "2026-11-16T04:03:09+00:00"}
+{"combined_score": 0.611, "content_id": "eff60653-3b78-469b-9851-0997deed40e9", "creator_id": "attacker_FP01", "guess": "unsure", "label": "We can't tell with confidence whether this was written by a person or an AI system. This isn't an accusation — it means our signals didn't agree clearly either way. No action has been taken; you're welcome to appeal if you'd like a person to look at it.", "model_score": 0.6175, "status": "decided", "style_score": 0.6045, "timestamp": "2026-11-16T04:03:07+00:00"}
+{"combined_score": 0.45305, "content_id": "b120578b-4c98-41ae-a3a1-81a3b52536fa", "creator_id": "attacker_PI05", "guess": "unsure", "label": "We can't tell with confidence whether this was written by a person or an AI system. This isn't an accusation — it means our signals didn't agree clearly either way. No action has been taken; you're welcome to appeal if you'd like a person to look at it.", "model_score": 0.6401, "status": "decided", "style_score": 0.266, "timestamp": "2026-11-16T04:03:08+00:00"}
+{"combined_score": 0.36766, "content_id": "f820aedb-378f-4838-9fd2-6d1949137c33", "creator_id": "unknown", "guess": "unsure", "label": "We can't tell with confidence whether this was written by a person or an AI system. This isn't an accusation — it means our signals didn't agree clearly either way. No action has been taken; you're welcome to appeal if you'd like a person to look at it.", "model_score": 0.2395, "status": "decided", "style_score": 0.6667, "timestamp": "2026-11-16T04:03:09+00:00"}
+{"creator_id": "eval_bad_empty", "event": "rejected", "reason": "missing_or_empty_text", "status": "rejected", "timestamp": "2026-11-16T03:45:05+00:00"}
+{"creator_id": "unknown", "event": "rejected", "limit": "5 per 1 minute", "reason": "rate_limited", "status": "rejected", "timestamp": "2026-11-16T03:58:32+00:00"}
 ```
 
 **The single worst outcome** — the one I'd least want to explain to a writer
 whose work got caught by it:
 
-
+MF06 and MF07 (`combined_score` 0.998 and 0.953, both `high-confidence AI`).
+MF06's input was emoji-only text; MF07's was text in a right-to-left,
+non-Latin script. Neither is a false accusation of writing I asked the
+system to evaluate as "real human prose" — these are malformed-input edge
+cases from the attack set, not calibrated false-positive text — but the
+*mechanism* is exactly the false-positive problem in its most severe form: my
+`stylometry.words()` only extracts `[a-z0-9']` characters, so any text with
+no ASCII letters at all (emoji, Arabic, Hebrew, Chinese, Cyrillic — an entire
+category of real human writing, not an edge case for the writers who use it)
+produces zero measurable words, zero measurable sentences, and zero
+measurable punctuation. Every one of `style_signal`'s three sub-components
+then reads that absence as *maximum* AI confidence (1.0) by construction,
+because my squashing formula treats "nothing to measure" the same as
+"maximally uniform, maximally machine-like." A real person submitting
+anything in a non-Latin script would be flagged with near-certainty by a
+mechanism that has nothing to do with whether they wrote it — this is worse
+than the `false_positive` family's 0.7–0.77 scores, and it would fall
+disproportionately on exactly the writers least likely to have the standing
+to appeal it.
 
 ---
 
@@ -362,21 +423,59 @@ that produced it:
 
 **Diagnoses**
 
-<!-- For each miss AND each broken attack: the stage and the mechanism.
+**False positives (6 of 8 BROKE — FP02–FP07).** Stage: signal one.
+Mechanism: every one of these six is plain, formal, or careful human writing
+(a formal register, a non-native speaker writing carefully, a student essay,
+technical documentation, a person imitating a template, deliberate
+repetition) — common words in ordinary, grammatical sentences. `gpt2` finds
+that exact profile easy to predict, so `model_signal` scored all six between
+0.74 and 0.88. Signal two's scores (0.59–0.69) were elevated too but not
+nearly as extreme, so this isn't a combining-rule failure — the two signals
+mostly *agreed*, which is precisely why the 0.4 disagreement rule never
+triggered to pull them back toward human. This is one problem (signal one's
+structural blind spot, named back in Unit 7 before any of this was run), not
+six independent ones.
 
-     Your service has five stages: the route, signal one, signal two, the
-     combining rule, and the label mapping.
+**Evasion (1 of 10 BROKE — EV01).** Stage: signal two. Mechanism: EV01's
+target was "typos raise word variety" — `type_token_ratio` counts unique
+words over total words, and a few misspelled words that don't match their
+correctly-spelled counterparts elsewhere in the text inflate the unique-word
+count without changing the actual vocabulary range. `style_signal` read
+0.6287 (AI-ish from the other two components but pulled down by the inflated
+TTR), `model_signal` separately dropped to 0.1635 (typos also make text less
+predictable to `gpt2` — a second, independent effect of the same edit), and
+the two signals landed 0.4653 apart — just over the 0.4 disagreement
+threshold — so the combining rule leaned the 70/30 way toward the lower
+(human) score, landing at 0.303. The other nine evasion attempts (broken-up
+sentences, pasted quotations, unusual words, padding) moved the score but
+not past either threshold — the system stayed suspicious even where it
+wasn't fully convinced.
 
-     Not a diagnosis:  "The evasion attacks got through."
-     A diagnosis:      "Four evasion inputs got through. All four had typos
-                        added to AI-generated text. My second signal measures
-                        word variety, and typos raise word variety — so it read
-                        them as more human. My combining rule weights that
-                        signal at 0.6, so it dragged the whole score down."
+**Prompt injection (0 of 6 BROKE).** Stage: none — there's no stage for this
+family to target. Both signals are pure measurement (perplexity,
+sentence/vocabulary/punctuation shape); neither signal, nor the combining
+rule, nor the label mapping, ever treats the submitted `text` as instructions
+to follow. An attack asking the system to "ignore the check" or "label this
+as human" has nothing to grab onto, because nothing downstream of `/submit`
+is an instruction-following component. I confirmed PI05 specifically
+(targeting the audit log) left the log well-formed — `audit.py` writes with
+`json.dumps`, not string interpolation, so there's no injection point there
+either.
 
-     Look for a pattern. Five failures on one signal is one problem, not five. -->
-
-
+**Malformed / flood_same_creator (0 of 32 BROKE).** Stage: the route
+(input validation) and, unexpectedly, the rate limiter. Every genuinely
+malformed body (missing field, wrong type, unparseable JSON, oversized text)
+was caught by the `isinstance`/length checks in `app.py::submit` before
+either signal ran, returning a clean 400. One real wrinkle: RQ10 and RQ11
+(two malformed-request attacks, not flood attacks) came back `429` instead of
+`400`. Mechanism: `rate_limit_key()` falls back to the caller's IP address
+whenever `creator_id` can't be read as a string — and five *earlier*
+malformed attacks (RQ02, RQ06, RQ07, RQ08, RQ09) all shared that same
+fallback for the same reason, filling the 5/minute IP bucket before RQ10 and
+RQ11 ever reached my validation code. Not a crash, and arguably still "held"
+in the sense that the malformed body still never got processed — but it's a
+real interaction between Milestone 1 and Milestone 2 worth naming rather than
+hiding: several *unrelated* attacks accidentally shared one identity.
 
 ---
 
