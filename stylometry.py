@@ -132,7 +132,23 @@ def style_signal(text: str) -> float:
     ⚠️ Blind spot: none of these three can read. A pasted quotation, a
     deliberately broken-up sentence, or scattered typos moves this signal
     without changing what the text says — see the module docstring.
+
+    ⚠️ **Revised after the Unit 8 attack run.** `words()` only extracts
+    `[a-z0-9']` characters. Text with none at all — emoji-only text, or any
+    non-Latin script (Arabic, Hebrew, Chinese, Cyrillic, ...) — produced zero
+    measurable words, sentences, and punctuation marks, and every component
+    below reads "nothing to measure" as *maximum* AI confidence by
+    construction (`raw = 0` -> `1.0`). The attack set's MF06 (emoji) and MF07
+    (right-to-left script) both scored >0.95 purely from this, which would
+    fall on real human writers in non-Latin scripts with no relationship to
+    what they actually wrote. When there are no extractable words at all,
+    this function now returns a neutral 0.5 instead of computing the three
+    (degenerate) components — admitting we have no style opinion rather than
+    defaulting to an accusation.
     """
+    if not words(text):
+        return 0.5
+
     spread = sentence_length_spread(text)
     ttr = type_token_ratio(text)
     punct = punctuation_density(text)
