@@ -107,10 +107,16 @@ MAX_TEXT_CHARS = 20_000
 # an hour, and a script sending a thousand variations to map your thresholds.
 # Your README has to say why your numbers and not others.
 
-RATE_LIMITING_ENABLED = os.getenv("AI201_RATE_LIMITS", "0") == "1"
+RATE_LIMITING_ENABLED = os.getenv("AI201_RATE_LIMITS", "1") == "1"
 
-RATE_LIMIT_PER_MINUTE = 10
-RATE_LIMIT_PER_DAY = 200
+# A real writer revising drafts might resubmit every minute or two during one
+# sitting, but rarely more than a handful of times total in a day. A script
+# mapping where the thresholds sit needs dozens of submissions in quick
+# succession to get a useful picture. 5/minute comfortably covers the first
+# and makes the second expensive; 100/day is generous for even a very active
+# single writer but still well below what a mapping script would want to send.
+RATE_LIMIT_PER_MINUTE = 5
+RATE_LIMIT_PER_DAY = 100
 
 # Flask-Limiter warns loudly without this. In-memory is right for one laptop
 # and wrong for anything real — a restart forgets every count, and two copies
