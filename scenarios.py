@@ -35,36 +35,94 @@ SCENARIOS = [
         ],
     },
     {
-        "name": "label coverage",
+        "name": "score spread",
         "criterion": 2,
-        # Inputs spread across your score range, so you can check all three
-        # labels are actually reachable.
+        # One text I'm confident is AI-generated, one I'm confident is
+        # human-written — the same pair used for calibration in the Unit 7
+        # README. Criterion 2 is the gap between their combined_score values,
+        # which has to be read off the pasted JSON by hand (run_eval.py
+        # doesn't diff two rows against each other for you).
         "texts": [
-            "REPLACE ME with something you're confident is AI-generated.",
-            "REPLACE ME with something you're confident is human-written.",
-            "REPLACE ME with something genuinely borderline.",
+            (
+                "In today's rapidly evolving digital landscape, it is important to note that "
+                "artificial intelligence plays a crucial role in driving innovation across "
+                "industries. Moreover, organizations must carefully consider the implementation "
+                "of these technologies in order to maximize efficiency and achieve optimal "
+                "outcomes. Ultimately, a comprehensive and strategic approach is essential for "
+                "long-term success in this ever-changing environment."
+            ),
+            (
+                "So I burned the rice again. Third time this week — my roommate is going to "
+                "start side-eyeing the rice cooker like it personally betrayed her. I don't even "
+                "know what I did differently. Same water, same everything. Ordered pizza instead, "
+                "ate it standing over the sink like a raccoon, no regrets."
+            ),
         ],
     },
-    # A bad-input criterion looks like this. Uncomment and adjust if that's one
-    # of your five — these are raw request bodies, sent exactly as written.
-    #
-    # {
-    #     "name": "bad input",
-    #     "criterion": 3,
-    #     "bodies": [
-    #         {"text": "", "creator_id": "eval_bad_empty"},
-    #         {"creator_id": "eval_bad_missing"},          # no text field at all
-    #         {"text": "word " * 50000, "creator_id": "eval_bad_huge"},
-    #         {"text": None, "creator_id": "eval_bad_null"},
-    #     ],
-    # },
+    {
+        "name": "label coverage",
+        "criterion": 3,
+        # Six inputs, two aimed at each label — picked from calibration runs
+        # against the live service, not guessed. In order: ai, ai, unsure,
+        # unsure, human, human.
+        "texts": [
+            (
+                "In today's rapidly evolving digital landscape, it is important to note that "
+                "artificial intelligence plays a crucial role in driving innovation across "
+                "industries. Moreover, organizations must carefully consider the implementation "
+                "of these technologies in order to maximize efficiency and achieve optimal "
+                "outcomes. Ultimately, a comprehensive and strategic approach is essential for "
+                "long-term success in this ever-changing environment."
+            ),
+            (
+                "My name is Maria and I work at the library downtown. I help people find books "
+                "and I also run the kids reading hour on Saturdays. I like my job because I meet "
+                "a lot of nice people. Sometimes it is hard when we are short staffed but we "
+                "manage. I have worked there for three years now."
+            ),
+            (
+                "So I burned the rice again. Third time this week — my roommate is going to "
+                "start side-eyeing the rice cooker like it personally betrayed her. I don't even "
+                "know what I did differently. Same water, same everything. Ordered pizza instead, "
+                "ate it standing over the sink like a raccoon, no regrets."
+            ),
+            (
+                "Run. Just run and don't look back, because the tide was already closing in around "
+                "the rocks and there was no time left to think about it, none at all. Go."
+            ),
+            (
+                "In todays rapidly evolvign digital landscape, its importnat to note that AI "
+                "plays a crucial role in driving innovaton across industries!! Moreover orgs must "
+                "carefully consider the implementaton of these technologies, in order to maximize "
+                "efficiency and acheive optimal outcomes. Ultimately a comprehensive & strategic "
+                "approach is essential for long term success in this ever changing enviroment."
+            ),
+            (
+                "Ontological commitments permeate epistemological frameworks pervasively. "
+                "Phenomenological inquiry necessitates methodological rigor absolutely. "
+                "Hermeneutical interpretation demands contextual sensitivity profoundly. "
+                "Dialectical reasoning facilitates conceptual clarity thoroughly. "
+                "Epistemic humility undergirds philosophical discourse perpetually."
+            ),
+        ],
+    },
+    {
+        "name": "bad input",
+        "criterion": 5,
+        "bodies": [
+            {"text": "", "creator_id": "eval_bad_empty"},
+            {"creator_id": "eval_bad_missing"},          # no text field at all
+            {"text": "word " * 50000, "creator_id": "eval_bad_huge"},
+            {"text": None, "creator_id": "eval_bad_null"},
+        ],
+    },
 
-    # TODO: add what your remaining criteria need.
-    #
-    # A criterion about the appeal path can't be tested by sending text alone;
-    # it needs a submission first and then an appeal against the content_id
-    # that came back. You'll need to test that one by hand, or extend this file
-    # and run_eval.py to do it. Saying which you did is part of the write-up.
+    # Criterion 4 (the appeal path) isn't here on purpose: it needs a
+    # submission followed by an appeal against the content_id that came back,
+    # which this file's "texts"/"bodies" shape can't express — a single
+    # request per entry. Tested instead with a standalone script,
+    # run_appeal_eval.py, documented in the README's Run Log and Verdicts
+    # section.
 ]
 
 
