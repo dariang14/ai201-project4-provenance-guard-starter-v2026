@@ -20,3 +20,7 @@ Thumbs.db
 # NOTE: logs/ and results/ are deliberately NOT ignored. Your audit log and
 # your attack runs are evidence, and they're part of what gets graded.
 # Commit them.
+
+# Transient gunicorn logs from run_unit9_eval.py's own test harness — not
+# evidence themselves, unlike logs/audit.jsonl and logs/requests.jsonl.
+logs/_gunicorn_eval_*.log

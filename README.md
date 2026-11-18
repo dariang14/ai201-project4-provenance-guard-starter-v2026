@@ -823,7 +823,7 @@ the problem was never the load being slow, it was the load happening at
 the wrong *time* (inside a request, under a timeout designed for request
 handling, not model loading).
 
-### Attack Run — After <!-- "Attack Run" is this unit's name for it, kept for format consistency with Unit 8 -->
+### Run Log — After
 
 Same 5 criteria, same 3-trial method, preload enabled
 (`results/unit9_eval_2026-11-18_0734_after.md`):
