@@ -232,6 +232,36 @@ system doesn't fit its host *before* you spend an evening watching it get
 killed is the skill unit 9 is actually testing. Write the arithmetic above in
 your write-up; that's the deliverable.
 
+### What's actually here (Unit 9)
+
+```bash
+gunicorn app:app --bind 127.0.0.1:5000 --workers 1 --config gunicorn.conf.py
+```
+
+`gunicorn.conf.py` sets `timeout = 120` and preloads the detector model in
+each worker right after it forks (`post_fork`), before that worker accepts
+any connections.
+
+**Why the timeout and the preload both exist, in that order:** testing this
+exact command without either of them is what this unit's testing actually
+found — the detector's cold load raced gunicorn's *default* 30-second
+worker timeout and lost, so the first real request got a `SIGKILL`ed
+worker instead of a slow answer. Raising the timeout alone would have
+"fixed" it by making a real user wait up to two minutes on their first
+request; preloading instead moves that wait to worker startup, where
+nobody's waiting on an answer. Set `AI201_PRELOAD_DETECTOR=0` only to
+reproduce the "before" measurement in the README — it isn't meant to be
+off in normal use.
+
+New route, same shape as `/log`:
+
+```bash
+curl "http://127.0.0.1:5000/requests?limit=10"
+```
+
+Every request to every route, structured — see **Instrumentation** in
+`README.md`.
+
 ---
 
 ## Where everything lives

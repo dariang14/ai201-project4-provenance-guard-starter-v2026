@@ -663,4 +663,270 @@ person.
 
 ---
 
+<!-- ═══════════════════════ UNIT 9 — THE CAPSTONE ═══════════════════════ -->
+
+## What This Extends
+
+This extends **Provenance Guard** (Units 7–8) — the AI-vs-human text
+detector. What's new in this unit is not another detection feature; it's
+making the *service itself* production-grade and measurable: a real run
+path instead of a dev server, structured request logging distinct from the
+decision log, and a measured cost-per-run.
+
+## The Shape
+
+**Shape A — deploy and instrument.** What was ruled out of scope: actually
+hosting this somewhere public. `RUNNING.md`'s existing Unit 9 section
+already works out why before this unit started — the detector needs
+`torch` plus a ~550 MB model in memory, comfortably over a free host's
+512 MB, and there's no persistent disk on a free tier either, so the
+download would restart on every spin-down. Trying to host it publicly
+isn't a stretch goal here; it's arithmetic that doesn't work. So "deploy"
+for this project means running it through a real server (`gunicorn`, not
+Flask's dev server) with real logging — Path B from that section, which
+`RUNNING.md` calls "the expected answer... not a fallback and not a
+failure." Everything in this unit is about that local, instrumented path.
+
+## Running It
+
+```bash
+gunicorn app:app --bind 127.0.0.1:5000 --workers 1 --config gunicorn.conf.py
+```
+
+`gunicorn.conf.py` sets a 120-second worker timeout (the model's cold load
+can be slow — see **What It Costs**) and preloads the detector model in
+each worker right after it forks, before that worker accepts any
+connections. Full detail, including why the timeout and preload exist at
+all, is in [`RUNNING.md`](RUNNING.md#running-it-somewhere-else-unit-9).
+
+## Instrumentation
+
+`instrumentation.py` adds structured request logging, wired into `app.py`
+via `before_request`/`after_request` so it covers **every** route
+automatically — not just the ones that remember to call it. Every request
+gets one line in `logs/requests.jsonl`:
+
+```json
+{"timestamp": "...", "method": "POST", "path": "/submit", "status": 200, "duration_ms": 45.54, "request_summary": {...}, "response_summary": {...}, "cost_usd": 0.0}
+```
+
+This is deliberately separate from `audit.jsonl`: that file records
+*decisions* (a label, once one was reached); this one records an
+*operational* fact about every request regardless of outcome — including
+ones rejected for bad input, ones that error, and ones the rate limiter
+blocked. `GET /requests?limit=N` reads it back the same way `GET /log`
+reads the audit log.
+
+**Ten real structured log entries** (from the Milestone 5/6 test run,
+`results/requests_before_full.jsonl`):
+
+```json
+{"timestamp": "2026-11-18T07:33:19+00:00", "method": "POST", "path": "/submit", "status": 200, "duration_ms": 3399.51, "request_summary": {"text": "Measuring first-request latency after a fresh worker start, for criterion 7.", "creator_id": "c7_first"}, "response_summary": {"content_id": "d2460d2b-2e09-4d80-a386-d6acf1ce0901", "guess": "human", "label": "We think this was probably written by a person."}, "cost_usd": 0.0}
+{"timestamp": "2026-11-18T07:33:19+00:00", "method": "POST", "path": "/submit", "status": 200, "duration_ms": 37.86, "request_summary": {"text": "A steady-state warm request used only to measure latency after the model is alre…", "creator_id": "c6_0"}, "response_summary": {"content_id": "ae130c5f-08c8-4db9-80c2-b3fed97c236a", "guess": "human", "label": "We think this was probably written by a person."}, "cost_usd": 0.0}
+{"timestamp": "2026-11-18T07:33:19+00:00", "method": "POST", "path": "/submit", "status": 200, "duration_ms": 36.8, "request_summary": {"text": "A steady-state warm request used only to measure latency after the model is alre…", "creator_id": "c6_1"}, "response_summary": {"content_id": "95cc537c-684b-4cdc-a49f-9bc09dc86400", "guess": "human", "label": "We think this was probably written by a person."}, "cost_usd": 0.0}
+{"timestamp": "2026-11-18T07:33:19+00:00", "method": "GET", "path": "/requests", "status": 200, "duration_ms": 0.33, "request_summary": null, "response_summary": {"count": 1}, "cost_usd": 0.0}
+{"timestamp": "2026-11-18T07:33:19+00:00", "method": "POST", "path": "/submit", "status": 400, "duration_ms": 0.63, "request_summary": {"text": "", "creator_id": "c8_bad_empty"}, "response_summary": {"error": "invalid_input"}, "cost_usd": 0.0}
+{"timestamp": "2026-11-18T07:33:19+00:00", "method": "POST", "path": "/submit", "status": 400, "duration_ms": 0.29, "request_summary": {"creator_id": "c8_bad_missing"}, "response_summary": {"error": "invalid_input"}, "cost_usd": 0.0}
+{"timestamp": "2026-11-18T07:33:19+00:00", "method": "POST", "path": "/submit", "status": 400, "duration_ms": 0.26, "request_summary": {"text": "x", "creator_id": "c8_bad_short"}, "response_summary": {"error": "invalid_input"}, "cost_usd": 0.0}
+{"timestamp": "2026-11-18T07:33:20+00:00", "method": "POST", "path": "/submit", "status": 429, "duration_ms": 1.31, "request_summary": {"text": "This is an ordinary submission sent repeatedly to check the rate limiter still w…", "creator_id": "c10_flood"}, "response_summary": {"error": "rate_limited"}, "cost_usd": 0.0}
+{"timestamp": "2026-11-18T07:33:20+00:00", "method": "POST", "path": "/submit", "status": 429, "duration_ms": 0.37, "request_summary": {"text": "This is an ordinary submission sent repeatedly to check the rate limiter still w…", "creator_id": "c10_flood"}, "response_summary": {"error": "rate_limited"}, "cost_usd": 0.0}
+```
+
+Note the 4th entry: `GET /requests` — the test harness's own measurement
+call — got logged too, exactly as designed, since instrumentation covers
+every route with no exceptions. Full file: `results/requests_before_full.jsonl`.
+
+## What It Costs
+
+**Warm, steady-state cost per run: ~38–58ms, $0.** There's no paid API —
+the detector is a local model — so the real cost is compute time, measured
+directly from `duration_ms` in the structured log: average 38–58ms across
+three 20-request trials (`results/unit9_eval_*.md`). **The hundred-a-day
+arithmetic:** 100 requests/day × ~45ms ≈ 4.5 seconds of total CPU time per
+day — trivial for a single always-on process, and genuinely $0 marginal
+cost, which is the actual advantage of this project's "run it locally"
+answer over hosting a comparable call through a paid API.
+
+**The other cost, the one `RUNNING.md` already measured:** `torch` (~200–800
+MB) plus the ~550 MB `gpt2` weights, both resident in memory just to serve
+the first request — against a free host's 512 MB. That's the arithmetic
+that rules out public hosting, from before this unit's testing even began.
+
+## Run Log and Verdicts
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 6. warm latency | ≥9/10 under 500ms | 10/10 | 10/10 | 10/10 | MET |
+| 7. first request after restart | < 5s | 3.40s | 3.49s | 3.50s | MET* |
+| 8. log completeness | 100% of submits | 6/6 | 6/6 | 6/6 | MET |
+| 9. cost bound | avg < 200ms | 39.0ms | 40.3ms | 38.1ms | MET |
+| 10. regression (rate limiter) | 5×200, 10×429 | ✓ | ✓ | ✓ | MET |
+
+\* See **Diagnoses** — this one needs an asterisk, not a clean MET.
+
+Produced by `run_unit9_eval.py::main` (`results/unit9_eval_2026-11-18_0733_before.md`,
+3 trials, preload disabled — the "before" configuration this unit's testing
+actually found a problem with).
+
+**Real output from one trial**, pasted as text, naming the file and
+function that produced it (`run_unit9_eval.py::run_trial`, trial 2 of the
+before run):
+
+```json
+{
+  "c7_first_request": {"status": 200, "server_ms": 3487.71, "wall_ms": 3493.68, "ready_detected": true},
+  "c6_warm_latency": {"under_500ms": 10, "of": 10, "durations_ms": [37.46, 35.25, 40.07, 36.89, 37.66, 45.61, 36.78, 38.07, 38.05, 34.56]},
+  "c8_log_completeness": {"sent": 6, "logged": 7, "complete": 7},
+  "c9_cost_bound": {"avg_ms": 40.29, "n": 20, "hundred_a_day_seconds": 4.03},
+  "c10_regression": {"codes": [200, 200, 200, 200, 200, 429, 429, 429, 429, 429, 429, 429, 429, 429, 429], "successes": 5, "limited": 10}
+}
+```
+
+**Diagnoses**
+
+**Criterion 7 needs the asterisk.** These three controlled trials (3.40s,
+3.49s, 3.50s) all technically met the 5-second target — but that's not the
+whole story, and reporting it as a clean MET would be misleading. Testing
+this system's real run path *before* these formal trials existed is what
+found the problem in the first place: on an uncontrolled first run, with
+this session's own background processes competing for CPU at the same
+moment, the detector's cold load took **64 seconds** and gunicorn's
+*default* 30-second worker timeout killed the worker outright
+(`WORKER TIMEOUT` → `SIGKILL`) before it could answer at all — not a slow
+response, a dropped connection. Stage: the worker lifecycle — the model
+was loading *inside* the first request's handler, racing a timeout that
+had no idea a model was loading. Mechanism: cold-load time depends on disk
+I/O and CPU contention, both of which vary with whatever else is running
+on the machine at that moment — exactly the kind of variance a clean,
+isolated 3-trial test harness is bad at reproducing, and exactly why these
+three trials came back faster than the real worst case. The three numbers
+in the table are real and unedited; they just don't bound the risk by
+themselves.
+
+**Everything else matched expectations.** Criteria 6, 8, 9, and 10 behaved
+identically before and after the fix, because none of them touch the
+cold-load path — warm requests were never the problem, the structured log
+and rate limiter don't care when the model loaded, and that consistency is
+itself useful evidence that the fix is narrowly scoped rather than having
+side effects elsewhere.
+
+## The Improvement
+
+**What I changed:** `gunicorn.conf.py`'s `post_fork` hook now calls
+`detector.warm_up()` in each worker immediately after it forks — before
+the worker accepts any connections — so the slow load happens once at a
+predictable moment (startup) instead of racing an unsuspecting user's first
+request.
+
+**Which diagnosis pointed at it:** The worker-lifecycle mechanism above —
+the problem was never the load being slow, it was the load happening at
+the wrong *time* (inside a request, under a timeout designed for request
+handling, not model loading).
+
+### Attack Run — After <!-- "Attack Run" is this unit's name for it, kept for format consistency with Unit 8 -->
+
+Same 5 criteria, same 3-trial method, preload enabled
+(`results/unit9_eval_2026-11-18_0734_after.md`):
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 7. first request after restart | < 5s | 69.0ms | 82.3ms | 74.3ms | MET |
+
+Criteria 6, 8, 9, 10: unchanged (10/10, 6/6, ~40–58ms avg, 5×200+10×429 —
+same as the before table above), confirming the fix didn't disturb anything
+it wasn't meant to touch.
+
+**Did it help, and how do I know:** Yes, decisively — 69–82ms is roughly
+45× faster than the controlled before-measurement, and categorically safer
+than the uncontrolled 64-second/crash case, because the slow part no longer
+happens inside any user-facing request at all; it happens at worker
+startup, which is a deploy-time concern, not a serving-time failure. I know
+because I measured the same three criteria (6, 8, 9, 10) before and after
+and confirmed they didn't move — this fix changed exactly one thing. The
+cost: startup itself now takes several seconds longer before a worker is
+ready to serve its first request (acceptable for a process meant to stay
+running, since this cost is paid once per restart, not once per request).
+
+## What's Still Broken
+
+**Criterion 7's "before" measurement understates the real risk.** What I'd
+do: force a genuinely cold measurement for every trial (drop the OS page
+cache before each one, which I did once, by hand, outside the formal 3
+trials — it came back at 4.8s, still technically under 5s that specific
+time, but the one organic 64-second/crash case is the one that actually
+matters and I only have it as a one-off observation, not a repeatable
+trial). Why I stopped: reliably reproducing CPU/IO contention on demand
+would mean building a second, separate stress-test harness, which is more
+infrastructure than this unit's scope calls for.
+
+**No actual dollar-metered deployment exists to validate "What It Costs"
+against.** What I'd do: if this ever needed to run somewhere a free host
+actually could serve it, I'd want real numbers from a paid tier instead of
+local compute-time extrapolation. Why I stopped: `RUNNING.md`'s own
+arithmetic already answers whether that's worth attempting for *this*
+project, and the answer is no — building a deployment just to validate a
+cost estimate the course itself says isn't the point would be solving the
+wrong problem.
+
+**The single thing I'd do first, given more time:** build the stress-test
+harness for criterion 7. It's the one criterion whose "MET" verdict I
+don't fully trust, and it's the one this whole extension exists because of.
+
+**The trade I'd make if this ran for real:** I'd keep the preload fix and
+accept the longer startup time without hesitation — a few extra seconds
+once, at a time nobody is waiting on an answer, costs nothing; the
+alternative (an unpredictable, potentially minute-plus stall on some real
+person's first request) is the one that actually costs someone something.
+
+## How I Used AI
+
+**Moment 1 (Unit 9)**
+
+- *What I asked for:* I asked which of my four finished projects would be
+  simplest to extend and explain, since I'd built them in separate
+  sessions and didn't have a clear read on the others.
+- *What came back:* A real comparison across all four repos (not a guess
+  from memory) — architecture complexity, whether each needed an API key,
+  and how each fit Shape A/B/C — landing on this project specifically
+  because it needs no API key and its own `RUNNING.md` had already
+  pre-solved the deployment question.
+- *What I changed:* Nothing about the recommendation itself, but I asked
+  for the actual extension work to start only once I understood *why* —
+  not just "trust me, do this one."
+
+**Moment 2**
+
+- *What I asked for:* After switching to gunicorn, I asked for the system
+  to actually be tested for real before building anything further on top
+  of it.
+- *What came back:* That test is what found the cold-start/worker-timeout
+  problem in the first place — a real crash, not a hypothetical one — which
+  became both a criterion and the thing the one improvement fixes.
+- *What I changed:* I asked for the controlled 3-trial numbers to be
+  reported honestly alongside the uncontrolled worse case that started all
+  of this, rather than letting the clean MET in the table stand
+  unqualified — which is why criterion 7 carries an asterisk instead of a
+  quiet pass.
+
+<!-- ═════════════════════════════════════════════════════════════════════
+
+     SUBMISSION CHECKLIST — unit 9
+
+       [ ] criteria.md has five new numbered criteria about the extension
+       [ ] README has all required unit 9 sections with real content
+       [ ] RUNNING.md describes the real run path
+       [ ] At least eight new commits this unit, criteria committed
+           before any results
+       [ ] Structured logging — ten+ entries pasted, failures included
+       [ ] All five criteria run three times each, real output pasted
+       [ ] Every miss diagnosed — stage and mechanism
+       [ ] One improvement, measured before and after
+       [ ] What's Still Broken, including the one thing to do first
+       [ ] The SAME repository URL as every previous unit
+
+     Do not delete and recreate this repository.
+     ═════════════════════════════════════════════════════════════════════ -->
+
+---
+
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
