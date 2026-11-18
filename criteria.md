@@ -112,3 +112,74 @@ Across missing `text`, empty `text`, `text` of 50,000+ words, and a `null` text 
      A number you missed stays where it is, gets diagnosed, and gets a fix
      attempted. That's where the points are.
      ───────────────────────────────────────────────────────────────────────── -->
+
+---
+
+## Unit 9 — The Capstone
+
+Five new criteria, written **before** running the Unit 9 test loop, about the
+extension itself (Shape A: deploy and instrument) — not about detection
+accuracy again.
+
+### 6. Warm-request latency
+
+At least 9 of 10 `/submit` requests, once the detector is already loaded in
+memory, complete in under 500ms.
+
+**Why this target:** Measured warm latency throughout this build has
+consistently landed between 40-115ms — 500ms is a wide, honest margin (not a
+number chosen to pass) that would still catch a real regression (a stray
+reload, a leak, a blocking call added later) without being tripped by normal
+jitter.
+
+### 7. First-request latency after a worker restart
+
+The first `/submit` request after a fresh gunicorn worker starts completes in
+under 5 seconds, across 3 separate restarts.
+
+**Why this target:** Testing this system's real run path (not the Flask dev
+server) surfaced a serious problem before this criterion even existed: the
+detector model loading inside the first request's handler took as long as 64
+seconds on a cold start — comfortably past gunicorn's own default 30-second
+worker timeout, which means a real deployment's first user would get a
+killed connection, not a slow answer. 5 seconds is deliberately tight enough
+that the old behavior fails it outright and the fix has to actually work.
+
+### 8. The structured log misses nothing
+
+100% of requests to `/submit` — including ones rejected for bad input and
+ones that error — produce exactly one entry in `logs/requests.jsonl` with
+all seven fields present (`timestamp`, `method`, `path`, `status`,
+`duration_ms`, `request_summary`, `response_summary`).
+
+**Why this target:** An operational log that only records successes is
+worse than no log at all, because it hides exactly the incidents — crashes,
+rejections, timeouts — that someone would actually go looking for it to
+explain. 100% and not "most" because a logging gap isn't a scoring judgment
+call the way a borderline detection label is; it's a correctness bug in the
+instrumentation itself.
+
+### 9. Cost stays bounded and the arithmetic holds
+
+The average `duration_ms` across 20 consecutive warm `/submit` requests stays
+under 200ms, keeping the "100 requests a day" compute-time arithmetic under
+20 seconds of total CPU time per day.
+
+**Why this target:** This project has no per-call dollar cost — the cost
+that exists is compute time, and it has to be cheap enough that "run it
+locally" (the deployment path this project is actually taking) is obviously
+sustainable rather than something to take on faith.
+
+### 10. The original system still works, unchanged
+
+After switching the run path to gunicorn, Unit 8's rate limiter still
+returns `429` on the same flood test (`python run_attacks.py --flood 15`,
+5 success then 10 rejected), and `/log` and `/appeal` behave identically to
+before the extension.
+
+**Why this target:** An extension is only safe if the system underneath it
+still does what it already proved it does — changing the run path is
+exactly the kind of change that could silently break something upstream of
+it (a decorator that only worked under the dev server, a background thread
+assumption), and this is the most direct way to check it didn't.
+
