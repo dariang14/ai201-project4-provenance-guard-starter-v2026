@@ -24,17 +24,66 @@ Routes:
     GET  /health      is the service up, and is the model loaded
 """
 
+import time
 import uuid
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 
 import audit
 import config
 import detector
+import instrumentation
 import scoring
 import stylometry
 
 app = Flask(__name__)
+
+
+# ── Structured request logging — UNIT 9 ───────────────────────────────────────
+# Wired once here so it covers every route automatically, including ones that
+# error, get rejected by input validation, or get rate-limited — not just the
+# routes that happen to call instrumentation.log_request() themselves.
+
+_SUMMARY_FIELDS = ("guess", "label", "error", "ok", "status", "content_id", "count")
+
+
+def _summarize_request():
+    payload = request.get_json(silent=True)
+    if isinstance(payload, dict):
+        return {
+            k: (v[:80] + "…" if isinstance(v, str) and len(v) > 80 else v)
+            for k, v in payload.items()
+        }
+    raw = request.get_data(as_text=True) or ""
+    return raw[:80] if raw else None
+
+
+def _summarize_response(response):
+    if not response.is_json:
+        return None
+    body = response.get_json(silent=True)
+    if not isinstance(body, dict):
+        return None
+    return {k: v for k, v in body.items() if k in _SUMMARY_FIELDS}
+
+
+@app.before_request
+def _start_timer():
+    g.start_time = time.perf_counter()
+
+
+@app.after_request
+def _log_structured_request(response):
+    duration_ms = (time.perf_counter() - g.get("start_time", time.perf_counter())) * 1000
+    instrumentation.log_request(
+        method=request.method,
+        path=request.path,
+        status=response.status_code,
+        duration_ms=duration_ms,
+        request_summary=_summarize_request(),
+        response_summary=_summarize_response(response),
+    )
+    return response
 
 
 # ── Rate limiting — UNIT 8 ────────────────────────────────────────────────────
@@ -344,6 +393,23 @@ def get_log():
     """
     limit = request.args.get("limit", type=int)
     entries = audit.read_entries(limit=limit)
+    return jsonify({"count": len(entries), "entries": entries})
+
+
+@app.get("/requests")
+def get_requests():
+    """
+    The structured request log, most recent last. — UNIT 9
+
+        curl "http://127.0.0.1:5000/requests?limit=10"
+
+    Every request to every route, including ones that errored, were
+    rejected, or were rate-limited — not just successful decisions. That's
+    the difference from `/log`, which only ever sees a decision once one was
+    reached.
+    """
+    limit = request.args.get("limit", type=int)
+    entries = instrumentation.read_entries(limit=limit)
     return jsonify({"count": len(entries), "entries": entries})
 
 
